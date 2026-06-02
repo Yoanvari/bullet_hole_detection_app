@@ -1,4 +1,6 @@
 import os
+import requests
+import time
 import sys
 import cv2
 import math
@@ -48,39 +50,51 @@ class VideoThread(QThread):
         self.original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
-        # Kirim resolusi ke GUI agar slider menyesuaikan
         self.size_signal.emit(self.original_width, self.original_height)
+        
+        # --- Variabel Temporal Filtering (Debounce) ---
+        self.max_hole_count = 0 
+        self.pending_hole_count = 0
+        self.detection_start_time = 0
+        self.debounce_duration = 1.5
         
         while self._run_flag:
             ret, frame = cap.read()
-            if not ret or not self._run_flag: break
+            if not ret or not self._run_flag: 
+                break
 
             try:
+                # 1. Warping Perspektif
                 if self.matrix is not None:
                     working_frame = cv2.warpPerspective(frame, self.matrix, (500, 500))
                 else:
                     working_frame = frame
 
+                # 2. Deteksi Objek (YOLO)
                 annotated_frame, boxes_data = self.detector.detect_frame(working_frame)
                 
                 hole_centers = []
                 target_center = None
                 target_radius = 0 
 
+                # 3. Klasifikasi Hasil
                 for cls, x, y, w, h in boxes_data:
-                    if cls == 1: 
+                    if cls == 2 or cls == 1: # Sesuaikan index bullet_hole
                         hole_centers.append((x, y))
-                    elif cls == 0: 
+                    elif cls == 0: # black_contour
                         target_center = (x, y) 
                         avg_size = (w + h) / 2
                         target_radius = (avg_size / 2) * 1.35
 
                 current_total_score = 0
+                
+                # 4. Ring Skor & Kalibrasi Elips (Sama seperti sebelumnya)
                 if target_center is not None:
                     if self.is_calibrated and target_radius > 0:
                         for i in range(1, 11):
                             current_radius = int(target_radius * (i/2))
-                            cv2.circle(annotated_frame, (int(target_center[0]), int(target_center[1])), current_radius, (0, 255, 0), 1)
+                            cv2.circle(annotated_frame, (int(target_center[0]), int(target_center[1])), 
+                                       current_radius, (0, 255, 0), 1)
                         for hole in hole_centers:
                             current_total_score += self.calculate_score_circle(hole, target_center, target_radius)
 
@@ -97,7 +111,8 @@ class VideoThread(QThread):
                         ellipse_cy = cy + int((d_bottom - d_top) / 2)
                         ellipse_rx = int((d_left + d_right) / 2)
                         ellipse_ry = int((d_top + d_bottom) / 2)
-                        cv2.ellipse(annotated_frame, (ellipse_cx, ellipse_cy), (ellipse_rx, ellipse_ry), 0, 0, 360, (255, 255, 0), 2)
+                        cv2.ellipse(annotated_frame, (ellipse_cx, ellipse_cy), 
+                                    (ellipse_rx, ellipse_ry), 0, 0, 360, (255, 255, 0), 2)
                         cv2.circle(annotated_frame, (cx, cy), 5, (0, 0, 255), -1)
 
                         if self.apply_ellipse_flag:
@@ -108,7 +123,51 @@ class VideoThread(QThread):
                             self.ellipse_params = None
                             self.is_calibrated = True
 
-                self.count_signal.emit(len(hole_centers))
+                # 5. LOGIKA MOBILE INTEGRATION DENGAN DEBOUNCING
+                current_hole_count = len(hole_centers)
+                current_time = time.time()
+                
+                if self.is_calibrated:
+                    # Skenario A: Mendeteksi potensi lubang baru
+                    if current_hole_count > self.max_hole_count:
+                        # Jika jumlahnya sama dengan yang sedang dipantau
+                        if current_hole_count == self.pending_hole_count:
+                            # Cek apakah sudah bertahan selama 1.5 detik?
+                            if (current_time - self.detection_start_time) >= self.debounce_duration:
+                                
+                                # SAH! Update rekor tertinggi
+                                self.max_hole_count = current_hole_count
+                                
+                                # Jalankan proses simpan dan kirim ke API
+                                save_dir = "web_server/static/shots"
+                                if not os.path.exists(save_dir):
+                                    os.makedirs(save_dir)
+
+                                timestamp = int(current_time)
+                                filename = f"shot_{timestamp}.jpg"
+                                filepath = os.path.join(save_dir, filename)
+                                cv2.imwrite(filepath, annotated_frame)
+                                
+                                try:
+                                    requests.post("http://localhost:8000/api/add_shot", 
+                                                  params={"filename": filename, "time_str": time.strftime("%H:%M:%S")}, 
+                                                  timeout=1)
+                                    print(f"Tembakan baru STABIL (Rekor {self.max_hole_count}) terkirim!")
+                                except Exception as api_err:
+                                    print(f"Gagal kirim ke API: {api_err}")
+                                    
+                        # Jika ini deteksi angka baru yang belum dipantau
+                        else:
+                            self.pending_hole_count = current_hole_count
+                            self.detection_start_time = current_time # Mulai hitung mundur (stopwatch)
+                            
+                    # Skenario B: Deteksi turun kembali ke rekor lama sebelum 1.5 detik (Flicker/Noise)
+                    else:
+                        # Reset pantauan sementara (stopwatch di-reset)
+                        self.pending_hole_count = self.max_hole_count
+
+                # 6. Emit Sinyal ke UI
+                self.count_signal.emit(current_hole_count)
                 self.score_signal.emit(current_total_score)
                 
                 rgb_image = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
@@ -117,8 +176,9 @@ class VideoThread(QThread):
                 self.change_pixmap_signal.emit(qt_img)
 
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"Error pada loop utama: {e}")
                 continue
+                
         cap.release()
 
     def stop(self):

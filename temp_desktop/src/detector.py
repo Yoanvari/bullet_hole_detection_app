@@ -12,7 +12,7 @@ class BulletDetector:
         return total_frames
 
     def detect_frame(self, frame):
-        results = self.model(frame, conf=0.6, classes=[0, 1], verbose=False)
+        results = self.model(frame, conf=0.55, classes=[0, 1], verbose=False)
         
         boxes_data = []
         # Ambil hasil deteksi mentah
