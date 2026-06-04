@@ -26,6 +26,7 @@ mobile_app/.flutter-plugins-dependencies
 # ===== DESKTOP APP =====
 # Foto hasil tembakan (generated at runtime)
 desktop_app/web_server/static/shots/
+assets/
 
 # ===== OS =====
 .DS_Store
