@@ -1,0 +1,37 @@
+# ===== PYTHON =====
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ===== UV =====
+# uv.lock di-commit (menjamin versi exact saat install)
+# .python-version di-commit jika ada
+# hello.py (file default dari uv init, tidak dipakai)
+desktop_app/hello.py
+backend/hello.py
+
+# ===== ENVIRONMENT VARIABLES (rahasia, jangan di-commit!) =====
+.env
+*.env
+!.env.example
+
+# ===== FLUTTER / DART =====
+mobile_app/build/
+mobile_app/.dart_tool/
+mobile_app/.flutter-plugins
+mobile_app/.flutter-plugins-dependencies
+
+# ===== DESKTOP APP =====
+# Foto hasil tembakan (generated at runtime)
+desktop_app/web_server/static/shots/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
